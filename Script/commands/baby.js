@@ -10,7 +10,7 @@ const SPAM_LIMIT = 4;
 const TEMP_BAN_MS = 10 * 60 * 1000;
 
 /* =========================
-   SAFE EVENT FUNCTIONS
+   SAFE EVENT DATA
 ========================= */
 
 function getSenderID(event) {
@@ -31,19 +31,19 @@ function getMessageID(event) {
   return event?.messageID || event?.messageId || null;
 }
 
-async function getSenderName(Users, senderID) {
+async function getName(Users, senderID) {
   if (!senderID) return "User";
 
   try {
-    const name = await Users.getNameUser(senderID);
-    return name || "User";
+    const result = await Users.getNameUser(senderID);
+    return result || "User";
   } catch (e) {
     return "User";
   }
 }
 
 /* =========================
-   SPAM SYSTEM
+   SPAM
 ========================= */
 
 function registerSpamTrigger(senderID) {
@@ -51,164 +51,195 @@ function registerSpamTrigger(senderID) {
 
   const now = Date.now();
 
-  let arr = spamTriggerMap.get(senderID) || [];
+  let arr =
+    spamTriggerMap.get(senderID) || [];
 
-  arr = arr.filter(time => now - time < SPAM_WINDOW_MS);
+  arr = arr.filter(
+    t => now - t < SPAM_WINDOW_MS
+  );
 
   arr.push(now);
 
-  spamTriggerMap.set(senderID, arr);
+  spamTriggerMap.set(
+    senderID,
+    arr
+  );
 
   return arr.length >= SPAM_LIMIT;
 }
 
-async function applyTempBan(api, Users, senderID, threadID, messageID) {
+async function applyTempBan(
+  api,
+  Users,
+  senderID,
+  threadID,
+  messageID
+) {
   if (!senderID) return;
 
   try {
+
     if (
       global.utils &&
       typeof global.utils.guardAdminBan === "function" &&
-      global.utils.guardAdminBan(api, senderID, threadID, messageID)
+      global.utils.guardAdminBan(
+        api,
+        senderID,
+        threadID,
+        messageID
+      )
     ) {
       spamTriggerMap.delete(senderID);
       return;
     }
+
   } catch (e) {}
 
   try {
-    const moment = require("moment-timezone");
 
-    const dateAdded = moment
-      .tz("Asia/Dhaka")
-      .format("HH:mm:ss L");
+    const moment =
+      require("moment-timezone");
 
-    const userData = await Users.getData(senderID);
+    const dateAdded =
+      moment
+        .tz("Asia/Dhaka")
+        .format("HH:mm:ss L");
 
-    const data = userData?.data || {};
+    const result =
+      await Users.getData(senderID);
+
+    const data =
+      result?.data || {};
 
     data.banned = 1;
     data.reason = "Spam trigger";
     data.dateAdded = dateAdded;
 
-    await Users.setData(senderID, {
-      data
-    });
+    await Users.setData(
+      senderID,
+      { data }
+    );
 
     if (!global.data.userBanned) {
-      global.data.userBanned = new Map();
+      global.data.userBanned =
+        new Map();
     }
 
-    global.data.userBanned.set(senderID, {
-      reason: data.reason,
-      dateAdded
-    });
+    global.data.userBanned.set(
+      senderID,
+      {
+        reason: data.reason,
+        dateAdded
+      }
+    );
 
     spamTriggerMap.delete(senderID);
 
     await api.sendMessage(
-      "❌ 𝗬𝗼𝘂 𝗵𝗮𝘃𝗲 𝗯𝗲𝗲𝗻 𝗯𝗮𝗻𝗻𝗲𝗱 𝗳𝗼𝗿 𝟭𝟬 𝗺𝗶𝗻𝘂𝘁𝗲𝘀. 𝗣𝗹𝗲𝗮𝘀𝗲 𝘁𝗿𝘆 𝗮𝗴𝗮𝗶𝗻 𝗹𝗮𝘁𝗲𝗿.",
+      "❌ 𝗬𝗼𝘂 𝗵𝗮𝘃𝗲 𝗯𝗲𝗲𝗻 𝗯𝗮𝗻𝗻𝗲𝗱 𝗳𝗼𝗿 𝟭𝟬 𝗺𝗶𝗻𝘂𝘁𝗲𝘀.",
       threadID,
       messageID
     );
 
-    setTimeout(async () => {
-      try {
-        if (
-          !global.data.userBanned ||
-          !global.data.userBanned.has(senderID)
-        ) {
-          return;
+    setTimeout(
+      async () => {
+
+        try {
+
+          if (
+            !global.data.userBanned ||
+            !global.data.userBanned.has(
+              senderID
+            )
+          ) return;
+
+          const d =
+            (await Users.getData(senderID))
+              ?.data || {};
+
+          d.banned = 0;
+
+          await Users.setData(
+            senderID,
+            { data: d }
+          );
+
+          global.data.userBanned.delete(
+            senderID
+          );
+
+        } catch (e) {
+
+          console.log(
+            "❌ Auto-unban:",
+            e.message
+          );
+
         }
 
-        const result = await Users.getData(senderID);
-
-        const d = result?.data || {};
-
-        d.banned = 0;
-
-        await Users.setData(senderID, {
-          data: d
-        });
-
-        global.data.userBanned.delete(senderID);
-
-      } catch (e) {
-        console.log(
-          "❌ Auto-unban error:",
-          e.message
-        );
-      }
-    }, TEMP_BAN_MS);
+      },
+      TEMP_BAN_MS
+    );
 
   } catch (e) {
+
     console.log(
-      "❌ Temp-ban error:",
+      "❌ Ban error:",
       e.message
     );
+
   }
 }
 
 /* =========================
-   SAFE TYPING
+   TYPING
 ========================= */
 
-async function sendTypingIndicatorV2(api, threadID, status) {
-  try {
-    /*
-      অনেক Mirai fork-এ mqttClient থাকে না।
-      তাই এখানে typing error না দিয়ে simply skip করা হচ্ছে।
-    */
-
-    if (
-      global.client &&
-      typeof global.client.sendTyping === "function"
-    ) {
-      await global.client.sendTyping(
-        api,
-        threadID,
-        status
-      );
-    }
-
-  } catch (e) {
-    console.log(
-      "⚠️ Typing indicator skipped:",
-      e.message
-    );
-  }
-}
-
-async function safeDelay(ms) {
-  return new Promise(resolve =>
-    setTimeout(resolve, ms)
+async function typing(ms = 1500) {
+  return new Promise(
+    resolve => setTimeout(
+      resolve,
+      ms
+    )
   );
 }
 
 /* =========================
-   API LOAD
+   LOAD API
 ========================= */
 
 (async () => {
+
   try {
 
-    const res = await axios.get(
-      "https://raw.githubusercontent.com/abdullahrx07/X-api/main/MaRiA/baseApiUrl.json"
-    );
+    const res =
+      await axios.get(
+        "https://raw.githubusercontent.com/abdullahrx07/X-api/main/MaRiA/baseApiUrl.json"
+      );
 
-    if (res.data && res.data.mari) {
-      simsim = res.data.mari;
-      console.log("✅ Baby API loaded");
+    if (
+      res.data &&
+      res.data.mari
+    ) {
+
+      simsim =
+        res.data.mari;
+
+      console.log(
+        "✅ Baby API loaded"
+      );
+
     }
 
   } catch (e) {
 
     console.log(
-      "❌ Baby API load error:",
+      "❌ Baby API load failed:",
       e.message
     );
 
   }
+
 })();
 
 /* =========================
@@ -226,56 +257,65 @@ module.exports.config = {
 
   premium: false,
 
-  version: "2.0.0",
+  version: "1.2.0",
 
   hasPermssion: 0,
 
   credits: "rX / Fixed",
 
   description:
-    "Baby AI with Teach, AutoTeach and Reply support",
+    "AI Baby",
 
-  commandCategory: "chat",
+  commandCategory:
+    "chat",
 
-  usages: "[query]",
+  usages:
+    "[query]",
 
   cooldowns: 0,
 
   prefix: false
+
 };
 
 /* =========================
-   SEND REPLY HANDLER
+   HANDLE REPLY STORAGE
 ========================= */
 
-function pushHandleReply(
+function saveReply(
   event,
   messageID
 ) {
 
   try {
 
+    if (
+      !global.client ||
+      !Array.isArray(
+        global.client.handleReply
+      )
+    ) return;
+
     const senderID =
       getSenderID(event);
 
-    if (
-      !global.client ||
-      !Array.isArray(global.client.handleReply)
-    ) {
-      return;
-    }
+    if (!senderID) return;
 
     global.client.handleReply.push({
 
       name:
         module.exports.config.name,
 
-      messageID,
+      messageID:
+
+        messageID,
 
       author:
+
         senderID,
 
       type:
+
         "simsimi"
 
     });
@@ -283,23 +323,28 @@ function pushHandleReply(
   } catch (e) {
 
     console.log(
-      "⚠️ handleReply error:",
+      "❌ Save reply error:",
       e.message
     );
 
   }
+
 }
 
 /* =========================
-   MAIN COMMAND
+   COMMAND
 ========================= */
 
-module.exports.run = async function ({
+module.exports.run =
+async function ({
   api,
   event,
   args,
   Users
 }) {
+
+  const senderID =
+    getSenderID(event);
 
   const threadID =
     getThreadID(event);
@@ -307,17 +352,12 @@ module.exports.run = async function ({
   const messageID =
     getMessageID(event);
 
-  const uid =
-    getSenderID(event);
+  if (!threadID) return;
 
-  if (!threadID) {
-    return;
-  }
-
-  if (!uid) {
+  if (!senderID) {
 
     return api.sendMessage(
-      "⚠️ Sender information পাওয়া যায়নি। আবার মেসেজ দিন।",
+      "⚠️ Sender ID পাওয়া যায়নি।",
       threadID,
       messageID
     );
@@ -325,14 +365,14 @@ module.exports.run = async function ({
   }
 
   const senderName =
-    await getSenderName(
+    await getName(
       Users,
-      uid
+      senderID
     );
 
   const query =
     Array.isArray(args)
-      ? args.join(" ").trim().toLowerCase()
+      ? args.join(" ").trim()
       : "";
 
   try {
@@ -340,20 +380,17 @@ module.exports.run = async function ({
     if (!simsim) {
 
       return api.sendMessage(
-        "⏳ Baby AI এখনও লোড হচ্ছে। একটু পরে আবার চেষ্টা করো।",
+        "⏳ Baby AI loading...",
         threadID,
         messageID
       );
 
     }
 
-    /* =========================
-       AUTOTEACH
-    ========================= */
+    /* AUTOTEACH */
 
     if (
-      args[0] &&
-      args[0].toLowerCase() ===
+      args[0]?.toLowerCase() ===
       "autoteach"
     ) {
 
@@ -375,13 +412,12 @@ module.exports.run = async function ({
       const status =
         mode === "on";
 
-      const res =
-        await axios.post(
-          `${simsim}/setting`,
-          {
-            autoTeach: status
-          }
-        );
+      await axios.post(
+        `${simsim}/setting`,
+        {
+          autoTeach: status
+        }
+      );
 
       return api.sendMessage(
         `✅ Auto teach is now ${
@@ -395,13 +431,10 @@ module.exports.run = async function ({
 
     }
 
-    /* =========================
-       LIST
-    ========================= */
+    /* LIST */
 
     if (
-      args[0] &&
-      args[0].toLowerCase() ===
+      args[0]?.toLowerCase() ===
       "list"
     ) {
 
@@ -412,25 +445,21 @@ module.exports.run = async function ({
 
       return api.sendMessage(
 
-        `╭─╼🌟 𝐁𝐚𝐛𝐲 𝐀𝐈 𝐒𝐭𝐚𝐭𝐮𝐬
+`╭─╼🌟 𝐁𝐚𝐛𝐲 𝐀𝐈 𝐒𝐭𝐚𝐭𝐮𝐬
 ├ 📝 𝐓𝐞𝐚𝐜𝐡𝐞𝐝 𝐐𝐮𝐞𝐬𝐭𝐢𝐨𝐧𝐬: ${res.data.totalQuestions || 0}
 ├ 📦 𝐒𝐭𝐨𝐫𝐞𝐝 𝐑𝐞𝐩𝐥𝐢𝐞𝐬: ${res.data.totalReplies || 0}
 ╰─╼👤 𝐃𝐞𝐯𝐞𝐥𝐨𝐩𝐞𝐫: 𝐫𝐗 𝐀𝐛𝐝𝐮𝐥𝐥𝐚𝐡`,
 
         threadID,
         messageID
-
       );
 
     }
 
-    /* =========================
-       MSG
-    ========================= */
+    /* MSG */
 
     if (
-      args[0] &&
-      args[0].toLowerCase() ===
+      args[0]?.toLowerCase() ===
       "msg"
     ) {
 
@@ -458,9 +487,7 @@ module.exports.run = async function ({
         );
 
       if (
-        !res.data ||
-        !res.data.replies ||
-        !res.data.replies.length
+        !res.data?.replies?.length
       ) {
 
         return api.sendMessage(
@@ -479,28 +506,23 @@ module.exports.run = async function ({
           )
           .join("\n");
 
-      const msg =
+      return api.sendMessage(
 
 `📌 𝗧𝗿𝗶𝗴𝗴𝗲𝗿: ${trigger.toUpperCase()}
-📋 𝗧𝗼𝘁𝗮𝗹: ${res.data.total || res.data.replies.length}
+📋 𝗧𝗼𝘁𝗮𝗹: ${res.data.total}
 ━━━━━━━━━━━━━━
-${formatted}`;
+${formatted}`,
 
-      return api.sendMessage(
-        msg,
         threadID,
         messageID
       );
 
     }
 
-    /* =========================
-       TEACH
-    ========================= */
+    /* TEACH */
 
     if (
-      args[0] &&
-      args[0].toLowerCase() ===
+      args[0]?.toLowerCase() ===
       "teach"
     ) {
 
@@ -524,20 +546,12 @@ ${formatted}`;
       }
 
       const ask =
-        parts.shift().trim();
+        parts[0].trim();
 
       const ans =
-        parts.join(" - ").trim();
-
-      if (!ask || !ans) {
-
-        return api.sendMessage(
-          "❌ Question এবং Reply দুটোই দিতে হবে।",
-          threadID,
-          messageID
-        );
-
-      }
+        parts.slice(1)
+          .join(" - ")
+          .trim();
 
       const res =
         await axios.get(
@@ -546,30 +560,24 @@ ${formatted}`;
           )}&ans=${encodeURIComponent(
             ans
           )}&senderID=${encodeURIComponent(
-            uid
+            String(senderID)
           )}&senderName=${encodeURIComponent(
             senderName
           )}`
         );
 
       return api.sendMessage(
-        `✅ ${
-          res.data?.message ||
-          "Successfully taught."
-        }`,
+        `✅ ${res.data?.message || "Taught successfully."}`,
         threadID,
         messageID
       );
 
     }
 
-    /* =========================
-       EDIT
-    ========================= */
+    /* EDIT */
 
     if (
-      args[0] &&
-      args[0].toLowerCase() ===
+      args[0]?.toLowerCase() ===
       "edit"
     ) {
 
@@ -616,21 +624,18 @@ ${formatted}`;
 
       return api.sendMessage(
         res.data?.message ||
-        "✅ Edited successfully.",
+        "✅ Edited.",
         threadID,
         messageID
       );
 
     }
 
-    /* =========================
-       REMOVE
-    ========================= */
+    /* REMOVE */
 
     if (
-      args[0] &&
       ["remove", "rm"].includes(
-        args[0].toLowerCase()
+        args[0]?.toLowerCase()
       )
     ) {
 
@@ -672,64 +677,39 @@ ${formatted}`;
 
       return api.sendMessage(
         res.data?.message ||
-        "✅ Removed successfully.",
+        "✅ Removed.",
         threadID,
         messageID
       );
 
     }
 
-    /* =========================
-       EMPTY MESSAGE
-    ========================= */
+    /* EMPTY */
 
     if (!query) {
 
-      const texts = [
-
+      const replies = [
         "Hey baby 💖",
-
-        "Yes, I'm here 😊",
-
-        "হ্যাঁ বলো 😌",
-
-        "কী হয়েছে? বলো 😊"
-
+        "Yes, I'm here 😘",
+        "হ্যাঁ বলো 😌"
       ];
 
-      const reply =
-        texts[
+      return api.sendMessage(
+        replies[
           Math.floor(
             Math.random() *
-            texts.length
+            replies.length
           )
-        ];
-
-      return api.sendMessage(
-        reply,
+        ],
         threadID,
         messageID
       );
 
     }
 
-    /* =========================
-       AI RESPONSE
-    ========================= */
+    /* AI */
 
-    await sendTypingIndicatorV2(
-      api,
-      threadID,
-      true
-    );
-
-    await safeDelay(1500);
-
-    await sendTypingIndicatorV2(
-      api,
-      threadID,
-      false
-    );
+    await typing(1200);
 
     const res =
       await axios.get(
@@ -745,8 +725,11 @@ ${formatted}`;
       "আমি বুঝতে পারিনি 😅";
 
     return api.sendMessage(
+
       response,
+
       threadID,
+
       (err, info) => {
 
         if (
@@ -754,7 +737,7 @@ ${formatted}`;
           info?.messageID
         ) {
 
-          pushHandleReply(
+          saveReply(
             event,
             info.messageID
           );
@@ -762,20 +745,20 @@ ${formatted}`;
         }
 
       },
+
       messageID
+
     );
 
   } catch (e) {
 
     console.log(
-      "❌ Baby command error:",
-      e
+      "❌ Baby error:",
+      e.message
     );
 
     return api.sendMessage(
-      `❌ Error: ${
-        e.message || "Unknown error"
-      }`,
+      `❌ Error: ${e.message}`,
       threadID,
       messageID
     );
@@ -795,50 +778,36 @@ async function ({
   Users
 }) {
 
+  const senderID =
+    getSenderID(event);
+
   const threadID =
     getThreadID(event);
 
   const messageID =
     getMessageID(event);
 
-  const uid =
-    getSenderID(event);
-
-  if (!threadID || !uid) {
-    return;
-  }
+  if (
+    !senderID ||
+    !threadID
+  ) return;
 
   const text =
     event?.body
       ?.toString()
-      .trim()
-      .toLowerCase();
+      .trim();
 
-  if (!text || !simsim) {
-    return;
-  }
+  if (!text || !simsim) return;
 
   try {
 
     const senderName =
-      await getSenderName(
+      await getName(
         Users,
-        uid
+        senderID
       );
 
-    await sendTypingIndicatorV2(
-      api,
-      threadID,
-      true
-    );
-
-    await safeDelay(1500);
-
-    await sendTypingIndicatorV2(
-      api,
-      threadID,
-      false
-    );
+    await typing(1200);
 
     const res =
       await axios.get(
@@ -866,7 +835,7 @@ async function ({
           info?.messageID
         ) {
 
-          pushHandleReply(
+          saveReply(
             event,
             info.messageID
           );
@@ -882,14 +851,12 @@ async function ({
   } catch (e) {
 
     console.log(
-      "❌ Baby handleReply error:",
+      "❌ handleReply:",
       e.message
     );
 
     return api.sendMessage(
-      `❌ Error: ${
-        e.message || "Unknown error"
-      }`,
+      `❌ Error: ${e.message}`,
       threadID,
       messageID
     );
@@ -915,9 +882,11 @@ async function ({
       .trim()
       .toLowerCase();
 
-  if (!text || !simsim) {
+  if (!text || !simsim)
     return;
-  }
+
+  const senderID =
+    getSenderID(event);
 
   const threadID =
     getThreadID(event);
@@ -925,39 +894,37 @@ async function ({
   const messageID =
     getMessageID(event);
 
-  const senderID =
-    getSenderID(event);
-
-  if (!threadID || !senderID) {
-    return;
-  }
+  if (
+    !senderID ||
+    !threadID
+  ) return;
 
   const senderName =
-    await getSenderName(
+    await getName(
       Users,
       senderID
     );
 
   /* =========================
-     TRIGGERS
+     BABY TRIGGERS
   ========================= */
 
   const triggers = [
-
-    "বাবু",
+    "baby",
+    "বেবী",
+    "বেবি",
     "bby",
+    "বাবু",
     "বট",
     "bot",
     "rahat",
     "রাহাদ",
-    "baby",
     "maria",
     "মারিয়া"
-
   ];
 
   /* =========================
-     SPAM CHECK
+     TRIGGER REPLY
   ========================= */
 
   if (
@@ -982,113 +949,55 @@ async function ({
 
     }
 
-  }
-
-  /* =========================
-     TRIGGER REPLIES
-  ========================= */
-
-  if (
-    triggers.includes(text)
-  ) {
-
     const replies = [
 
-      "আমাকে না ডেকে সজীবের ইনবক্সে যাও 😌",
+      "হ্যাঁ বলো 😒, তোমার জন্য কি করতে পারি?",
 
-      "হ্যাঁ বলো 😒 কী করতে পারি?",
+      "কী হয়েছে এতো ডাকো কেন 😒",
 
-      "বার বার ডাকলে কিন্তু মাথা গরম হয়ে যায় 😑",
+      "বলো, শুনছি আমি 😏",
 
-      "বলো, শুনছি 😊",
+      "হুম বলো কী বলবে 😌",
 
-      "কী হয়েছে এতো ডাকো কেন? 😒",
+      "আরে Bolo, কী হয়েছে? 😚",
 
       "এই যে আমি আছি 😌",
 
-      "এতো ডাকাডাকি করো কেন? 😅",
+      "এতো ডাকো কেন? 🤔",
 
-      "বলো কী বলবে 🤭",
+      "হ্যাঁ জানাও কী দরকার 😊",
 
-      "হুম বলো, শুনছি তো 😌",
-
-      "আজকে মন ভালো নেই, আস্তে করে বলো 😪",
-
-      "এই প্রথম বট দেখছো নাকি? 😂",
-
-      "হুদাই ডাকাডাকি করো কেন? 🙂",
-
-      "আমাকে ডাকলে চকলেট দিতে হবে 😒🍫",
-
-      "বলো কী করতে পারি তোমার জন্য 😊",
-
-      "তোমার কথা শুনছি, বলো 😌",
-
-      "আচ্ছা বলো, কী দরকার? 😐",
-
-      "আমি তো এখানেই আছি 😎",
-
-      "সজীব বসের পক্ষ থেকে শুভেচ্ছা 😌",
-
-      "আসসালামু আলাইকুম 🌸",
-
-      "ওয়ালাইকুম আসসালাম 🌺",
-
-      "হুম জানাও কী হয়েছে 🙂",
-
-      "দূরে যেও না, কথা বলো 😄",
-
-      "কী ব্যাপার? আমাকে ডাকলে কেন? 🤔",
-
-      "হা বলো 😒 কী করতে পারি?",
+      "বলো কী করতে পারি তোমার জন্য",
 
       "আমি শুনছি, বলো 😌",
 
-      "আবার বট বলে চলে যেও না কিন্তু 😒",
+      "আবার বট বলে চলে যেও না 😒",
 
-      "ঠিক আছে, বলো তোমার কথা 😊",
+      "হুদাই ডাকাডাকি করো কেন 🙂",
 
-      "হুম, আমি আছি এখানে 🤗",
+      "কী ব্যাপার? আমাকে ডাকলে কেন? 🤔",
 
-      "তোমার সুন্দর কথাটা শুনতে চাই 😌",
+      "হুম, বলো 😌",
 
-      "আজকে এত ডাকাডাকি কেন? 😂",
+      "আচ্ছা বলো, কী হয়েছে?",
 
-      "বলো, সবার সামনে বলবে নাকি? 🤭",
+      "এই যে Baby হাজির 😎",
+
+      "হ্যাঁ, আমি এখানে আছি ❤️",
 
       "কী খবর তোমার? 😊",
 
-      "ভালো আছো তো? 🌸",
+      "বলো, তোমার কথা শুনছি 🤗",
 
-      "আচ্ছা বলো, কী নিয়ে কথা বলবে?",
+      "আমাকে ডাকছিলে? 😒",
 
-      "আমি কিন্তু সব শুনছি 😎",
+      "হুম বলো, কী দরকার?",
 
-      "হুমম... বলো 😌",
+      "ঠিক আছে, বলো 😊",
 
-      "এই যে, হাজির! 🙋",
+      "কী হয়েছে? শান্ত হয়ে বলো 😌",
 
-      "কী হলো? 😐",
-
-      "আবার ডাকছো? 😂",
-
-      "বলো বাবু, কী হয়েছে? 😊",
-
-      "আমাকে ডেকেছো? 🤔",
-
-      "হুম বলো, শুনছি ❤️",
-
-      "কী সাহায্য লাগবে বলো 🙂",
-
-      "চুপচাপ ডাকলে তো হবে না, কথা বলো 😑",
-
-      "বলো না, এত ভাব কেন? 😄",
-
-      "আমি প্রস্তুত, বলো 😎",
-
-      "হ্যাঁ, তোমার মেসেজ পেয়েছি 😌",
-
-      "ঠিক আছে, শুরু করো 😄"
+      "আবার ডাকলে কিন্তু আসতেই হবে 😅"
 
     ];
 
@@ -1100,19 +1009,7 @@ async function ({
         )
       ];
 
-    await sendTypingIndicatorV2(
-      api,
-      threadID,
-      true
-    );
-
-    await safeDelay(1200);
-
-    await sendTypingIndicatorV2(
-      api,
-      threadID,
-      false
-    );
+    await typing(800);
 
     return api.sendMessage(
 
@@ -1127,7 +1024,7 @@ async function ({
           info?.messageID
         ) {
 
-          pushHandleReply(
+          saveReply(
             event,
             info.messageID
           );
@@ -1141,45 +1038,27 @@ async function ({
   }
 
   /* =========================
-     PREFIX STYLE
-     baby hello
-     bby hello
+     BABY + MESSAGE
   ========================= */
 
-  const matchPrefix =
-    /^(baby|bby|xan|bbz|mari|মারিয়া)\s+/i;
+  const prefix =
+    /^(baby|bby|bbz|xan|mari|মারিয়া|বেবী|বেবি)\s+/i;
 
   if (
-    matchPrefix.test(text)
+    prefix.test(text)
   ) {
 
     const query =
       text
-        .replace(
-          matchPrefix,
-          ""
-        )
+        .replace(prefix, "")
         .trim();
 
-    if (!query) {
+    if (!query)
       return;
-    }
 
     try {
 
-      await sendTypingIndicatorV2(
-        api,
-        threadID,
-        true
-      );
-
-      await safeDelay(1200);
-
-      await sendTypingIndicatorV2(
-        api,
-        threadID,
-        false
-      );
+      await typing(1000);
 
       const res =
         await axios.get(
@@ -1207,7 +1086,7 @@ async function ({
             info?.messageID
           ) {
 
-            pushHandleReply(
+            saveReply(
               event,
               info.messageID
             );
@@ -1221,11 +1100,6 @@ async function ({
       );
 
     } catch (e) {
-
-      console.log(
-        "❌ Prefix AI error:",
-        e.message
-      );
 
       return api.sendMessage(
         `❌ Error: ${e.message}`,
@@ -1255,9 +1129,74 @@ async function ({
 
       if (
         !setting.data?.autoTeach
-      ) {
-        return;
-      }
+      ) return;
 
       const ask =
-        event?.messageReply?.b
+        event
+          ?.messageReply
+          ?.body
+          ?.toString()
+          .trim();
+
+      const ans =
+        event
+          ?.body
+          ?.toString()
+          .trim();
+
+      if (
+        !ask ||
+        !ans ||
+        ask.toLowerCase() ===
+        ans.toLowerCase()
+      ) return;
+
+      setTimeout(
+        async () => {
+
+          try {
+
+            await axios.get(
+              `${simsim}/teach?ask=${encodeURIComponent(
+                ask
+              )}&ans=${encodeURIComponent(
+                ans
+              )}&senderID=${encodeURIComponent(
+                String(senderID)
+              )}&senderName=${encodeURIComponent(
+                senderName
+              )}`
+            );
+
+            console.log(
+              "✅ Auto-taught:",
+              ask,
+              "→",
+              ans
+            );
+
+          } catch (err) {
+
+            console.log(
+              "❌ Auto-teach:",
+              err.message
+            );
+
+          }
+
+        },
+        300
+      );
+
+    } catch (e) {
+
+      console.log(
+        "❌ Auto-teach setting:",
+        e.message
+      );
+
+    }
+
+  }
+
+};
